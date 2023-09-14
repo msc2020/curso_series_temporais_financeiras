@@ -1,4 +1,4 @@
-# Coódigos feitos no curso Análise de séries temporais financeiras usando o R
+# Códigos feitos no curso Análise de séries temporais financeiras usando o R
 
 Atividades feitas ao longo do curso "Análise de séries temporais financeiras usando o R" oferecido pela UFSCAR, 2023.
 
