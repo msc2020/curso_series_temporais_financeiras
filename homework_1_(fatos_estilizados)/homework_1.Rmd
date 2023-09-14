@@ -1,0 +1,743 @@
+---
+title: "Homework 1 (Fatos estilizados)"
+author: "Marcelo Santos Carielo"
+date: "jul/2023"
+output:
+  html_document:
+    toc: yes
+    smart: no
+editor_options:
+  markdown:
+    wrap: 72
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+rm(list=ls())
+```
+
+## Questão 1
+
+***Você deve escolher 4 (quatro) variáveis disponı́veis no Yahoo
+Finance e verificar os fatos estilizados de séries temporais
+financeiras, seguindo aproximadamente o que foi mostrado na aula.***
+
+<hr>
+
+### Fatos Estilizados
+
+#### Séries Temporais Financeiras: Fatos estilizados
+
+-   <u>caudas pesadas:</u> retornos de ativos são leptocúrticos (Mandelbrot,
+    1963; Fama (1963, 1965), ou seja, possuem caudas pesadas -
+    coeficiente de curtose maior que 3. Lembrando que o valor de
+    referência 3 é o que resulta da distribuição Normal. Dessa forma,
+    seria mais apropriado usar distribuições com caudas pesadas para
+    modelagem do retorno de ativos, tais como Pareto-Lévy, t-Student,
+    entre outras.
+
+-   <u>efeitos de alavancagem:</u> Black (1976) observou que os movimentos de
+    preço são negativamente correlacionados com a volatilidade. Se há
+    queda nos preços da empresa, ocorre um aumento da alavancagem
+    (endividamento/valor ativo total) e aumento da incerteza o que tende
+    a gerar aumento da volatilidade.
+
+-   <u>efeito calendário:</u> retorno/volatilidade variam com o calendário.
+Exemplo: efeito dia da semana (maior retorno às segundas, etc),
+proximidade de feriados, intradiários.
+
+-   <u>ausência de correlação linear:</u> retornos não autocorrelacionados. Em
+    geral, a série de retornos é estacionária, com média ao redor de
+    zero. Ajustar um modelo ARMA é desafiador e o melhor que poderemos
+    fazer, muitas vezes, é um AR(1).
+
+-   <u>quadrados dos retornos são autocorrelacionados:</u> heterocedasticidade
+    condicional. Séries temporais financeiras revelam instantes de tempo
+    de alta e baixa volatilidade que se agrupam (clusters de
+    volatilidade). De fato, agrupamentos de volatilidade e caudas
+    pesadas estão relacionados.
+
+-   <u>co-movimentos de volatilidade:</u> globalização dos mercados aumenta a
+    volatilidade e co-movimentos. Contágio.
+
+-   <u>efeito de bad news:</u> mercado fica mais "nervoso" com más notícias
+    (bad news) do que com boas notícias (good news).
+
+**fonte:** Slides Aula 
+
+<hr>
+
+## Resposta 1:
+
+Inicialmente, fazemos o download de 4 variáveis do `Yahoo Finance`
+(<https://finance.yahoo.com/>,
+<https://br.financas.yahoo.com/world-indices/>) utilizando o pacote 
+`BatchGetSymbols` 
+(<https://www.rdocumentation.org/packages/BatchGetSymbols/versions/2.6.4/topics/BatchGetSymbols>).
+
+**<u>OBS:</u>**
+Iremos considerar o seguinte período para análise: de `01/jan/2019` a 
+`01/jul/2023`. Além disso, para simplificar, assumiremos que a expressão 
+`retorno` se refere tanto ao `retorno do preço diário (taxa de mundança)` 
+como ao `log` (logaritmo natural) desse valor.
+
+
+**Referências:**
+- <https://www.b3.com.br/pt_br/produtos-e-servicos/negociacao/renda-variavel/empresas-listadas.htm> (Consulta de empresas listadas na B3)
+- <https://br.financas.yahoo.com/quote/%5EBVSP/components/> (30 principais 
+componentes da Ibovespa, principal indicador de desempenho das ações negociadas 
+na B3)
+
+```{r Fatos Estilizados - download datasets}
+library(BatchGetSymbols, quietly=TRUE)
+# ?BatchGetSymbols
+# install.packages("BatchGetSymbols", dependencies=TRUE)
+# https://stackoverflow.com/questions/31008877/unable-to-install-rvest-package
+
+# define data
+date_init <- "2019-01-01"
+# date_end <- Sys.Date()
+date_end <- "2023-07-01"
+
+# download de dados de ativos no Yahoo Finance
+tickers <- c("PETR3.SA", "VALE3.SA", "JBSS3.SA", "PETR4.SA")
+assets <- BatchGetSymbols(tickers = tickers,
+                          first.date = date_init,
+                          last.date = date_end,
+                          type.return = "log", # log retorno
+                          freq.data = "daily")
+
+# head(assets)
+
+print(assets$df.control$ticker)
+
+glimpse(assets)
+
+assets <- assets[[2]]
+
+```
+
+#### Análise preliminar
+
+A seguir iremos gerar alguns gráficos, para cada um dos 4 ativos escolhidos no Yahoo Finance, de forma que possamos verificar alguns fatos estilizados de séries temporais financeiras.
+
+**Sobre a númeração dos tickers:**
+
+As `ações` são negociadas na bolsa de valores por um código de letras e números - 
+o ticker. As quatro letras maiúsculas representam o nome do ativo. 
+Já os números vão de 1 a 10 e representam, normalmente, o `tipo de ativo`:
+  
+  . 1: ativo com direito de subscrição a uma Ação ordinária; 
+
+  . 2: ativo com direito de subscrição a uma Ação preferencial; 
+
+  . 3: Ação ordinária; 
+
+  . 4: Ação preferencial;  
+
+  . 5 a 8: Ações preferenciais das classes A a D; 
+
+  . 9: subscrição de Ação ordinária; 
+
+  . 10: subscrição de Ação preferencial. 
+
+As `ações ordinárias`, por ex. PETR3 (PETROBRAS) ou JBSS3 (JBS), são as mais 
+comuns no mercado e garantem ao investidor o direito a voto nas assembleias 
+deliberativas. Logo, permitem a participação na tomada de decisões, como 
+escolha dos diretores, alterações no estatuto, etc. 
+
+As `ações preferenciais`, como a PETR4, garantem aos investidores a preferência 
+no pagamento de dividendos e outras compensações. O mesmo acontece em caso de 
+falência da companhia.
+Entretanto, normalmente não há direito a votos na assembleia, nem há a 
+segurança do [Tag Along](https://pt.wikipedia.org/wiki/Tag_along). Outro ponto 
+é que esses papéis são considerados `exigíveis`. Isso significa, basicamente, 
+que a empresa pode solicitar as ações a qualquer momento.
+
+**Fonte:**
+<https://blog.genialinvestimentos.com.br/diferenca-entre-petr3-petr4/>
+
+
+### PETR3  e PETR4 (PETRÓLEO BRASILEIRO S.A.- PETROBRAS)
+
+**Descrição:**
+Petróleo Brasileiro S.A. (Petrobras) é uma empresa de capital 
+aberto (sociedade anônima), cujo acionista majoritário é o Governo do Brasil 
+(União), sendo, portanto, uma empresa estatal de economia mista. Com sede no 
+Rio de Janeiro, opera atualmente em 14 países, no segmento de energia, 
+prioritariamente nas áreas de exploração, produção, refino, comercialização e transporte de petróleo, gás natural e seus derivados. O seu lema atual é 
+"Uma empresa integrada de energia que atua com responsabilidade social e 
+ambiental". Em 2020 Forbes Global 2000, a Petrobras foi classificada como a septuagésima maior empresa pública do mundo.
+
+**Fonte:**
+<https://pt.wikipedia.org/wiki/Petrobras>
+
+
+### VALE3 (VALE S.A.)
+
+**Descrição:**
+Vale S.A. é uma mineradora multinacional brasileira e uma das 
+maiores operadoras de logística do país. É uma das maiores empresas de 
+mineração do mundo e também a maior produtora de minério de ferro, de pelotas
+e de níquel. A empresa também produz manganês, ferroliga, cobre, bauxita, 
+potássio, caulim, alumina e alumínio. No setor de energia elétrica, a empresa 
+participa em consórcios e atualmente opera nove usinas hidrelétricas, no Brasil, 
+no Canadá e na Indonésia. Em 2008, a empresa chegou a ser a 33° maior do 
+mundo (de acordo com o Financial Times de 2008) e a maior do Brasil em volume 
+de exportações. Em 2009, a marca e o nome de fantasia da empresa deixaram de 
+ser Companhia Vale do Rio Doce (CVRD) e passaram a ser apenas Vale S.A., nome 
+pelo qual sempre foi conhecida nas bolsas de valores.
+
+**Fonte:**
+<https://pt.wikipedia.org/wiki/Vale_S.A.>
+
+
+### JBSS3 (JBS S.A.)
+
+**Descrição:**
+JBS S.A. (B3: JBSS3) é uma empresa brasileira do setor de alimentosfundada em 
+1953 em Goiás. A companhia opera no processamento de carnes bovina, suína, ovina, 
+de frango, de peixe e *plant-based*, além de atuar no processamento de couros.
+Além disso, comercializa produtos de higiene e limpeza, colágeno, embalagens 
+metálicas, biodiesel, entre outros, sendo uma das maiores indústrias de 
+alimentos do mundo. Suas principais operações incluem as marcas Seara, Swift e 
+Friboi.
+
+**Fonte:** 
+https://pt.wikipedia.org/wiki/JBS
+
+
+```{r Análise cotação e retorno - pt1}
+library(ggplot2)
+library(gridExtra)
+min(assets$ref.date)
+
+# preço diário
+g <- ggplot(data=assets) +
+  geom_line(mapping=aes(x=ref.date, y=price.close, color=ticker), 
+            linewidth=0.8, na.rm=TRUE) +
+  geom_rect(aes(xmin=as.Date("2019-11-01"), xmax=as.Date("2020-10-01"),
+                ymin=0, ymax=150),
+            fill="transparent", linetype=3, color="orange", size=1.2) +
+  labs(x="", y="Preço de Fechamento", 
+       title="Cotação Diária",
+       subtitle=paste("Período: de ", date_init, " a ", date_end, sep=""),
+       caption="Fonte: B3") +
+  theme_minimal()
+g
+
+# retorno diário
+g.returns <- ggplot(data=assets) +
+  geom_line(aes(x=ref.date, y=ret.closing.prices, color=ticker),
+            alpha=0.7, linewidth=0.4, na.rm=TRUE) +
+  geom_rect(aes(xmin=as.Date("2019-11-01"), xmax=as.Date("2020-10-01"), 
+                ymin=-0.4, ymax=0.3),
+            fill="transparent", linetype=3, color="orange", size=1.2) +
+  labs(x="" , y="Retornos",
+       title="Retorno Diário",
+        subtitle=paste("Período: de", date_init, " a ", date_end, sep=""), 
+        caption="Fonte: B3") +
+    theme_minimal()
+g.returns
+
+grid.arrange(g, g.returns, nrow=1, ncol=2)
+
+```
+
+Pelos gráficos acima, notamos que a média dos retornos oscila em torno de 0. 
+Além disso, a cotação diária e os retornos possuem o efeito da alavancagem, 
+pois por volta do primeiro semestre de 2020 o preço dos ativos caiu bruscamente 
+(vide gráfico da Cotaçõ Diária, o trecho em destaque). O gráfico de retornos 
+mostra que no mesmo período a volatilidade aumentou e há uma correlação 
+negativa entre os retornos e os preços. De fato, foi neste período que a 
+pandemia de COVID-19 (uma <i>bad news</i>) começou a crescer 
+no Brasil, período de muitas incertezas em todos os setores.
+
+A seguir temos um gráfico dos valores absolutos dos retornos. Notemos que as 
+altas varições destacadas, indicam a ocorrência de alta volatilidade, portanto 
+período de alta incerteza. Os períodos destacados em vermelho indicam períodos
+cuja alta volatilidade esteve presente nos retornos dos 4 ativos. Já os períodos
+em azul indicam uma possível diminuição da volatilidade, se comparado com o os 
+que estão em vermelho.
+
+```{r Análise cotação e retorno - pt2}
+
+# retornos absolutos 
+g.volatility <- ggplot(data=assets) +
+  geom_line(aes(x=ref.date, y=abs(ret.closing.prices), color=ticker),
+            alpha=0.7, linewidth=0.4, na.rm=TRUE) +
+  geom_rect(aes(xmin=as.Date("2019-11-01"), xmax=as.Date("2020-10-01"), 
+                ymin=0, ymax=0.37),
+            fill="transparent", linetype=2, color="red", size=1) +
+  geom_rect(aes(xmin=as.Date("2021-01-01"), xmax=as.Date("2021-06-01"), 
+                ymin=0, ymax=0.25),
+            fill="transparent", linetype=2, color="red", size=1) +
+  geom_rect(aes(xmin=as.Date("2021-07-01"), xmax=as.Date("2022-04-01"), 
+                ymin=0, ymax=0.1),
+            fill="transparent", linetype=2, color="blue", size=0.8) +
+  geom_rect(aes(xmin=as.Date("2022-05-01"), xmax=as.Date("2023-02-01"), 
+                ymin=0, ymax=0.15),
+            fill="transparent", linetype=2, color="red", size=1) +
+  geom_rect(aes(xmin=as.Date("2023-03-01"), xmax=as.Date("2023-06-20"), 
+                ymin=0, ymax=0.1),
+            fill="transparent", linetype=2, color="blue", size=0.8) +
+  labs( x="", y="Retorno Absoluto",
+        title="Retorno Absoluto",
+        subtitle=paste("Período: ", date_init, " - ", date_end, sep=""),
+        caption="Fonte: B3")+
+  theme_minimal()
+g.volatility
+
+```
+
+
+```{r Análise cotação e retorno - pt3}
+
+# qqplot
+# ?stat_qq()
+qqplot <- ggplot(data=assets, 
+                 aes(sample=ret.closing.prices, color=ticker)) +
+  stat_qq(na.rm=TRUE) +
+  stat_qq_line(na.rm=TRUE) +
+    labs(x="Quantis teóricos (Normais)", y="Quantis amostra", 
+         title="Q-Q plot",
+         subtitle="Retornos diários da PETR3.SA",
+         caption="Fonte: B3") +
+  theme_minimal() +
+  facet_wrap(~ticker, nrow=2)
+qqplot
+
+```
+
+```{r Análise cotação e retorno - pt4}
+
+# histograma
+histogram <- ggplot(data=assets) +
+  geom_histogram(aes(x=ret.closing.prices, y=after_stat(density), 
+                     fill=ticker, color=ticker),
+                 linetype=1, alpha=0.5, bins=30, na.rm=TRUE) +
+  geom_density(aes(x=ret.closing.prices, y=after_stat(density), color=ticker),
+               na.rm=TRUE, linewidth=0.7) +
+  labs(x="", y="Densidade", title="Histograma",
+       subtitle="Retornos diários",
+       caption="Fonte: B3") +
+  theme_minimal() +
+  facet_wrap(~ticker, nrow=2)
+histogram
+
+```
+
+Os gráficos Q-Q plot mostram que como seus percentis são afastados da Normal 
+quando analisamos suas caudas, então a distribuição do retorno possui 
+cauda pesada. Portanto, eventos raros ocorrem com certa frequência e devem ser considerados nas análises desta série temporal. Notemos ainda que, pelos histogramas, a média da distribuição dos retornos é zero.
+
+___
+
+## Questão 2. Extra 
+***Calcule as principais estatı́sticas descritivas das variáveis: média, desvio-padrão, variância, curtose, assimetria, etc.***
+
+## Resposta 2:
+
+Iremos realizar o cálculos de nosso sumário estatístico para cada um dos 4 
+ativos aqui analisados utilizando o pacote `fBasics` (<https://rdocumentation.org/packages/fBasics/versions/4022.94>).
+
+### PETR3
+
+```{r Estatísticas PETR3}
+
+petro3 <- assets %>% 
+  filter(ticker=="PETR3.SA")
+
+daily_returns_petro3 <- petro3 %>%
+  select(ref.date, ticker, ret.closing.prices) 
+
+# "package to investigate basic properties of financial returns 
+# and related quantities" [fonte: help]
+library(fBasics)
+# ?fBasics
+
+# computa resumo estatístico
+basicStats(daily_returns_petro3$ret.closing.prices)
+
+```
+
+### PETR4
+
+```{r Estatísticas PETR4}
+
+petro4 <- assets %>% 
+  filter(ticker=="PETR4.SA")
+
+daily_returns_petro4 <- petro4 %>%
+  select(ref.date, ticker, ret.closing.prices) 
+
+# computa resumo estatístico
+basicStats(daily_returns_petro4$ret.closing.prices)
+
+```
+
+
+### VALE3
+
+```{r Estatísticas VALE3}
+
+vale <- assets %>% 
+  filter(ticker=="VALE3.SA")
+
+daily_returns_vale <- vale %>%
+  select(ref.date, ticker, ret.closing.prices) 
+
+# computa resumo estatístico
+basicStats(daily_returns_vale$ret.closing.prices)
+
+```
+
+### JBSS3
+
+```{r Estatísticas JBSS3}
+
+jbs <- assets %>% 
+  filter(ticker=="JBSS3.SA")
+
+daily_returns_jbs <- jbs %>%
+  select(ref.date, ticker, ret.closing.prices) 
+
+# computa resumo estatístico
+basicStats(daily_returns_jbs$ret.closing.prices)
+
+```
+
+Analisemos os valores obtidos acima.
+Para a PETR3 a curtose calculada foi de K = 20.09. Então os retornos deste ativo 
+são [`leptocúrticos`](https://www.investopedia.com/terms/l/leptokurtic.asp). Portanto, há uma maior probabilidade de eventos extremos 
+(positivos ou negativos) ocorrerem, se comparado a distribuição Normal.
+De fato, já que K > 3, então essa distribuição possui excesso de curtose (consequentemente, cauda pesada) e a
+distribuição Normal parece não ser a distribuição mais adequada para 
+modelar tais valores de retornos. Distribuições como `t-Student`, ou [`distribuição de Laplace`](https://en.wikipedia.org/wiki/Laplace_distribution) são mais adequadas para este caso. O mesmo ocorre para os demais ativos 
+(PETR4, VALE3, JBSS3), sendo que a volatilidade para os retornos da JBSS3 são 
+os menos voláteis no período analisado, pois sua curtose é K = 8.81, isto é, 
+menos que a metade dos demais.
+Além disso, outro fato é que a média de cada um dos 4 ativos aqui estudados 
+é zero.
+
+<hr>
+
+### Testes de hipótese da normalidade para média e curtose
+
+Calculemos os testes de [t-Student](https://en.wikipedia.org/wiki/Student's_t-test) e de [`Jarque-Bera`](https://www.rdocumentation.org/packages/fBasics/versions/4022.94/topics/NormalityTests) para rejeitarmos (ou não) as hipóteses nulas de média zero e de curtose K=3, respectivamente.
+
+#### PETR3
+
+```{r Testes - curtose pt.1}
+
+# ?t.test
+# teste de t-Student para normalidade
+t.test(na.exclude(daily_returns_petro3$ret.closing.prices))
+
+```
+Como o p do teste acima foi p > 0.05, então não podemos rejeitar a hipótese nula de que a média da distribuição é Normal (i.e., a média é zero).
+
+```{r Testes - curtose pt.2}
+
+# ?jarqueberaTest
+# teste de Jarque-Bera para normalidade
+jarqueberaTest(na.exclude(daily_returns_petro3$ret.closing.prices))
+
+```
+Como o p do teste foi p < 0.05, então rejeitamos a hipótese nula de que a curtose K da distribuição é Normal (K=3). Portanto, a distribuição dos retornos da PETR3 tem cauda pesada.
+
+
+#### PETR4, VALE3, JBSS3
+
+```{r Testes - curtose pt.3}
+
+print("PETR4")
+# teste de t-Student para normalidade
+t.test(na.exclude(daily_returns_petro4$ret.closing.prices))
+# teste de Jarque-Bera para normalidade
+jarqueberaTest(na.exclude(daily_returns_petro4$ret.closing.prices))
+
+print("VALE3")
+t.test(na.exclude(daily_returns_vale$ret.closing.prices))
+jarqueberaTest(na.exclude(daily_returns_vale$ret.closing.prices))
+
+print("JBSS3")
+t.test(na.exclude(daily_returns_jbs$ret.closing.prices))
+jarqueberaTest(na.exclude(daily_returns_jbs$ret.closing.prices))
+
+```
+O valor do p do teste de t-Student foi p > 0.05 para PETR4, VALE3 e JBSS3. Logo, não podemos rejeitar a hipótese nula de que a média é zero).
+
+Além do mais, como o p do teste de Jarque-Bera foi p < 0.05 para PETR4, VALE e JBSS3, então rejeitamos a hipótese nula de que a curtose da distribuição é Normal (K=3). Portanto, concluímos que a distribuição dos retornos dos ativos PETR4, VALE3 e JBSS3 tem cauda pesada.
+
+
+### Gráficos em comparação com a distribuição Normal
+
+Abaixo refizemos o gráfico dos histograma dos 4 ativos, acrescentando o gráfico de uma distribuição Normal com média e variância iguais a um dos ativos. Apenas para fins de comparação, fixamos o mesmo valor para os 4 gráficos.
+
+Para simplificar, ao invés de considerarmos as distribuições Normais com mesma média e variância, escolhemos fixar esses valores no ativo com maior variância $\sigma^2$ (o que equivale a maior desvio padrão $\sigma$). Portanto, adicionamos aos histogramas a distribuição Normal com média = 0 e $\sigma$ = 0.031653 (desvio padrão da PETR3). Além disso, buscando melhorar a visualização, também reduzimos o intervalo do eixo x dos gráficos.
+
+```{r Comparação com a Normal}
+# histograma
+xmin <- -0.15
+xmax <- 0.15
+assests_subset <- assets[assets$ret.closing.prices>=xmin &
+                           assets$ret.closing.prices<=xmax, ]
+
+petro3_subset <- petro3[petro3$ret.closing.prices>=xmin & 
+                         petro3$ret.closing.prices<=xmax, ]
+
+histogram0 <- ggplot(data=na.exclude(assests_subset)) +
+  geom_histogram(aes(x=ret.closing.prices,
+                        y=after_stat(density), 
+                     fill=ticker, color=ticker),
+                 linetype=1, alpha=0.5, bins=30, na.rm=TRUE) +
+  geom_density(aes(x=ret.closing.prices, y=after_stat(density), color=ticker),
+               na.rm=TRUE, linewidth=0.7) +
+  stat_function(data=assets, 
+                fun=dnorm,
+                n=length(na.exclude(petro3_subset$ret.closing.prices)),
+                args=list(mean=0, 
+                          sd=0.031653),
+                linetype=5, linewidth=0.7) +
+  labs(x="", y="Densidade", title="Histograma",
+       subtitle="Retornos diários",
+       caption="Fonte: B3") +
+  theme_minimal() +
+  facet_wrap(~ticker, nrow=2)
+histogram0
+
+# histograma
+xmin <- -0.01
+xmax <- 0.4
+assests_subset <- assets[assets$ret.closing.prices>=xmin &
+                           assets$ret.closing.prices<=xmax, ]
+
+petro3_subset <- petro3[petro3$ret.closing.prices>=xmin & 
+                         petro3$ret.closing.prices<=xmax, ]
+
+histogram2 <- ggplot(data=na.exclude(assests_subset)) +
+  geom_histogram(aes(x=ret.closing.prices,
+                        y=after_stat(density), 
+                     fill=ticker, color=ticker),
+                 linetype=1, alpha=0.5, bins=30, na.rm=TRUE) +
+  geom_density(aes(x=ret.closing.prices, y=after_stat(density), color=ticker),
+               na.rm=TRUE, linewidth=0.7) +
+  stat_function(data=assets, 
+                fun=dnorm,
+                n=length(na.exclude(petro3_subset$ret.closing.prices)),
+                args=list(mean=0, 
+                          sd=0.031653),
+                linetype=5, linewidth=0.7) +
+  labs(x="", y="Densidade", title="Histograma",
+       subtitle="Retornos diários",
+       caption="Fonte: B3") +
+  theme_minimal() +
+  facet_wrap(~ticker, nrow=2)
+histogram2
+# class(histogram2)
+
+# histograma
+xmin <- 0.05
+xmax <- 0.4
+assests_subset <- assets[assets$ret.closing.prices>=xmin &
+                           assets$ret.closing.prices<=xmax, ]
+
+petro3_subset <- petro3[petro3$ret.closing.prices>=xmin & 
+                         petro3$ret.closing.prices<=xmax, ]
+
+histogram3 <- ggplot(data=na.exclude(assests_subset)) +
+  geom_histogram(aes(x=ret.closing.prices,
+                        y=after_stat(density), 
+                     fill=ticker, color=ticker),
+                 linetype=1, alpha=0.5, bins=10, na.rm=TRUE) +
+  geom_density(aes(x=ret.closing.prices, y=after_stat(density), color=ticker),
+               na.rm=TRUE, linewidth=0.7) +
+  stat_function(data=assets, 
+                fun=dnorm,
+                n=length(na.exclude(petro3_subset$ret.closing.prices)),
+                args=list(mean=0, 
+                          sd=0.031653),
+                linetype=5, linewidth=0.7) +
+  labs(x="", y="Densidade", title="Histograma",
+       subtitle="Retornos diários",
+       caption="Fonte: B3") +
+  theme_minimal() +
+  facet_wrap(~ticker, nrow=2)
+histogram3
+
+```
+
+Pelas linhas tracejada em preto nos gráficos acima, referentes a distribuição Normal, notamos que a média da distribuição calculada é zero. Além disso, os gráfico que focam nas caudas das distribuções, mostram o efeito de cauda 
+pesada dos retornos. A parte colorida fica acima da linha tracejada conforme analisamos as extremidades das caudas de cada uma das 4 distribuições dos respectivos ativos.
+
+<hr>
+
+## Questão 3. Extra
+
+***Calcule o coeficiente de correlação entre dois retornos e
+faça o gráfico de dispersão.***
+
+## Resposta 3:
+A seguir calculamos algumas das correlações entre os 4 ativos.
+
+```{r Calcula coeficiente de correlação}
+
+#?cor
+cor(na.exclude(petro3$ret.closing.prices), 
+    na.exclude(vale$ret.closing.prices))
+
+cor(na.exclude(petro4$ret.closing.prices), 
+    na.exclude(vale$ret.closing.prices))
+
+cor(na.exclude(petro3$ret.closing.prices), 
+    na.exclude(jbs$ret.closing.prices))
+
+cor(na.exclude(petro4$ret.closing.prices), 
+    na.exclude(jbs$ret.closing.prices))
+
+cor(na.exclude(petro3$ret.closing.prices), 
+    na.exclude(petro4$ret.closing.prices))
+
+cor(na.exclude(petro4$ret.closing.prices), 
+    na.exclude(jbs$ret.closing.prices))
+
+cor(na.exclude(vale$ret.closing.prices), 
+    na.exclude(jbs$ret.closing.prices))
+
+```
+<hr>
+
+Notemos que a maior correlação ocorre entre PETR3 e PETR4, e a menor entre 
+JBS3 e VALE3, sendo os respectivos ceficientes de correlação iguais a 
+0.976 e 0.296.
+
+```{r Gráfico correlação}
+
+#fit_cor1 <- lm(na.exclude(vale$ret.closing.prices) ~
+#                 na.exclude(jbs$ret.closing.prices))
+#summary(fit_cor1)
+
+g_cor1 <- ggplot(mapping=aes(x=na.exclude(vale$ret.closing.prices), 
+                             y=na.exclude(jbs$ret.closing.prices)),
+                 na.rm=TRUE) +
+  geom_point(size=2, alpha=0.3, color="violet") + 
+  geom_smooth(method="lm", color="black", na.rm=TRUE) +
+  labs(title="Gráfico de dispersão - VALE3 x JBS3",
+       y="Retorno JBS3",
+       x="Retorno VALE3")
+g_cor1
+
+g_cor2 <- ggplot(mapping=aes(x=na.exclude(petro3$ret.closing.prices), 
+                             y=na.exclude(petro4$ret.closing.prices)),
+                 na.rm=TRUE) +
+  geom_point(size=2, alpha=0.3, color="#007722") + 
+  geom_smooth(method="lm", color="black", na.rm=TRUE) +
+  labs(title="Gráfico de dispersão - VALE3 x JBS3",
+       y="Retorno PETRO4",
+       x="Retorno PETRO3")
+g_cor2
+
+g_cor3 <- ggplot(mapping=aes(x=na.exclude(petro3$ret.closing.prices), 
+                             y=na.exclude(jbs$ret.closing.prices)),
+                 na.rm=TRUE) +
+  geom_point(size=2, alpha=0.3, color="#00aa77") +
+  geom_smooth(method="lm", color="black", na.rm=TRUE) +
+  labs(title="Gráfico de dispersão - JBS3 x PETRO3",
+       y="Retorno JBS",
+       x="Retorno PETRO3")
+g_cor3
+
+```
+Observamos pelos gráficos de dispersão que os ativos da PETR3 e PTR4 possuem 
+alta correlação. Já os demais gráficos mostram que ativos usados possuem baixa correlação. Por exemplo, o gráfico mostra que a correlação entre VALE3 e JBS3 é baixa, visto a disperão dos pontos. Isso está de acordo com a correlação 
+calculada de 0.295631 para esses ativos no exercício anterior.
+
+<hr>
+
+## Questão 4. Extra
+***Você pode fazer também o mapa de calor para as correlações 
+entre os quatro ativos escolhidos.***
+
+## Resposta 4:
+
+Vejamos os gráficos anteriores, considerando a aplicação de um mapa de calor.
+
+### Scatter plot
+```{r Adiciona mapa de calor}
+Retorno <- na.exclude(vale$ret.closing.prices)
+g_cor1 <- ggplot(mapping=aes(x=na.exclude(vale$ret.closing.prices), 
+                             y=na.exclude(jbs$ret.closing.prices),
+                             color=Retorno),
+                 na.rm=TRUE) +
+  scale_colour_gradient(low="green", high="red") +
+  geom_point(size=2, alpha=0.3) +
+  geom_smooth(method="lm", color="black", na.rm=TRUE) +
+  labs(title="Gráfico de dispersão dos retornos - JBS3 x VALE3",
+       y="JBS3",
+       x="VALE3") + 
+  theme_minimal()
+g_cor1
+
+
+Retorno <- na.exclude(petro3$ret.closing.prices)
+g_cor2 <- ggplot(mapping=aes(x=na.exclude(petro3$ret.closing.prices), 
+                             y=na.exclude(petro4$ret.closing.prices),
+                             color=Retorno),
+                 na.rm=TRUE) +
+  scale_colour_gradient(low="gray", high="red") +
+  geom_point(size=2, alpha=0.3) +
+  geom_smooth(method="lm", color="black", na.rm=TRUE) +
+  labs(title="Gráfico de dispersão dos retornos - JBS3 x VALE3",
+       y="PETR3",
+       x="PETR4") + 
+  theme_minimal()
+g_cor2
+
+g_cor3 <- ggplot(mapping=aes(x=na.exclude(petro3$ret.closing.prices), 
+                             y=na.exclude(jbs$ret.closing.prices),
+                             color=Retorno),
+                 na.rm=TRUE) +
+  geom_point(size=2, alpha=0.3) +
+  scale_colour_gradient(low="blue", high="orange") +
+  geom_smooth(method="lm", color="black", na.rm=TRUE) +
+  labs(title="Gráfico de dispersão dos retornos - JBS3 x PETRO3",
+       y="JBS3",
+       x="PETRO3") + 
+  theme_minimal()
+g_cor3
+
+```
+
+### Matriz de correlação - mapa de calor
+
+```{r}
+
+list_returns <- list(petro3=na.exclude(petro3$ret.closing.prices), 
+                     petro4=na.exclude(petro4$ret.closing.prices),
+                     vale=na.exclude(vale$ret.closing.prices),
+                     jbs=na.exclude(jbs$ret.closing.prices))
+
+df_returns <- as.data.frame(list_returns)
+# head(df_returns)
+correlation_matrix <- round(cor(df_returns), 2)
+
+# gráfico matriz de correlação
+# install.packages("ggcorrplot")
+library(ggcorrplot)
+# ?ggcorrplot
+
+ggcorrplot(correlation_matrix, hc.order=TRUE,
+           outline.color="white",
+           colors=c("blue", "white", "orange"))
+
+```
+
+<hr>
+
+## REFERÊNCIAS:
+
+- Materiais das aulas (profa. Andreza Palma)
+
+- CAP1 do livro "TSAY, Ruey S. <i>An introduction to analysis of financial data with R.</i> John Wiley & Sons, 2014."

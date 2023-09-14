@@ -1,0 +1,523 @@
+---
+title: "Homework 4 (Lista modelos ARCH)"
+author: "Marcelo Santos Carielo"
+date: "ago/2023"
+output:
+  html_document:
+    toc: yes
+    smart: no
+editor_options:
+  markdown:
+    wrap: 72
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+rm(list=ls())
+options(warn=-1)
+# options(warn=0)
+```
+
+<hr>
+
+## Questão 1
+
+***Considere o modelo ARCH(1) dado por:***
+
+\begin{eqnarray}
+r_t &=& δ + \epsilon_t \\
+\epsilon_t &=& \sigma_t\,z_t, z_t ∼ N(0, 1) \\
+\sigma_{t}^2 &=& \bar{\omega}+ \alpha\,\epsilon_{t−1}^2 \\
+\end{eqnarray}
+
+***onde $\bar{\omega}> 0$ e $\alpha \ge 0$.
+Seja o conjunto de informação $I_{t−1} = \{r_1, r_2, \dots ,r_{t−1} \}$.
+(a) Explique em palavras por que os parâmetros $\bar{\omega}$ e $\alpha$ são restritos ser positivo e não negativo, respectivamente.
+(b) Explique em palavras como o modelo acima permite clusters de volatilidade,
+que é um fato empı́rico estilizado de séries financeira.
+(c) Cite dois fatos estilizados de séries temporais financeiras que não são capturados pelo modelo acima.
+(d) Explique em palavras a diferença entre variância condicional e incondicional.***
+
+## Resposta 1
+
+**(a)** Na equação $\sigma_{t}^2 = \bar{\omega}+ \alpha\,\epsilon_{t−1}^2$ acima, como a variância $\sigma_{t}^2$ tem que ser positiva, então o coeficiente $\alpha$ e $\bar{\omega}$ são tais que $\alpha\ge 0$ e $\bar{\omega} > 0$.
+
+**(b)** O modelo ARCH(1), permite modelarmos tanto a média quanto a variância condicional (volatilidade). Com os modelos ARCH, além de modelarmos a variância que é constante no tempo, é modelado a variância que depende do tempo, i..e, a volatilidade. Dessa maneira, quando estimarmos um modelo para uma série temporal com o ARCH de forma adequada, é esperado que os efeitos de cluster sejam capturados pelo modelo. Neste modelo, grandes choques tendem  a ser seguidos por outros grandes choques.
+
+**(c)** O modelo ARCH não captura o efeito de *bad news* e nem o *efeito de alavancagem*.
+
+**(d)** Na variância condicional, a variância depende explicitamente do tempo (dos erros $\epsilon_t$). Na variância incodicional a variância não depende do tempo (ou seja, é constante).
+
+<hr>
+
+## Questão 2
+***Descreva como as FAC e FACP são utilizadas no contexto de modelos da famı́lia
+ARCH. Em quais etapas do ajuste do modelo elas são úteis?***
+
+## Resposta 2
+
+Para testar a heterocedasticidade condicional de uma série temporal $y_t$, podemos definir a série dos resíduos $a_t = y_t - \mu$, onde $\mu$ é a média $E(y_t)$ de $y_t$, e analisar o gráfico da FAC e FACP dos resíduos ao quadrado $a_t ^2$. Se houver correlação significativa em $a_t^2$, será notada autocorrelações siginitivas nos gráficos em questão. Se os primeiros m lags da FAC de $a_t^2$ são iguais a zero, então a  heterocedasticidade é incondicional.
+
+<hr>
+
+## Questão 3
+
+***Ajuste os modelos da família ARCH vistos em aula, considerando a ordem (1, 1)
+com as distribuições normal e t-Student para as seguintes séries, iniciando em 2019:
+(a) log-retornos diários das ações da PETROBRAS;
+(b) log-retornos diários do IBOVESPA.***
+
+## Resposta 3
+Para este exercício, usaremos a série de retornos do IBOVESPA de `01/01/2019` até o dia de hoje (`2023-07-16`). O código abaixo coleta esses dados do Yahoo Finance.
+
+```{r Coleta dados do IBOVESPA}
+# https://blog.devgenius.io/volatility-modeling-with-r-arch-and-garch-models-11fde2d7ac38
+library(rugarch)
+library(BatchGetSymbols)
+
+# define datas de início e fim
+date_init <- "2019-01-01"
+date_end <- "2023-07-16"
+#date_end <- Sys.Date()
+
+# coleta dados do IBOVESPA
+tickers <- c("^BVSP", "PETR3.SA")
+assets <- BatchGetSymbols(tickers=tickers,
+                          first.date=date_init,
+                          last.date=date_end,
+                          type.return="log", # log retorno
+                          freq.data="daily")
+assets <- assets[[2]]
+```
+
+Após coletarmos os dados, com frequência diária, realizamos os ajustes necessários para termos a série temporal de interesse:
+
+```{r}
+ibovespa <- assets %>% 
+  filter(ticker=="^BVSP")
+
+pretobras <- assets %>% 
+  filter(ticker=="PETR3.SA")
+```
+
+```{r}
+library(fBasics)
+
+daily_returns_ibovespa <- ibovespa %>%
+  select(ref.date, ret.closing.prices)
+daily_returns_petro <- pretobras %>%
+  select(ref.date, ret.closing.prices)
+
+
+# computa resumo estatístico
+basicStats(daily_returns_ibovespa$ret.closing.prices)
+basicStats(daily_returns_petro$ret.closing.prices)
+
+date <- daily_returns_ibovespa %>%
+  select(ref.date) %>% 
+  rename(date=ref.date) %>% 
+  slice(-1)
+
+daily_returns_ibovespa <- daily_returns_ibovespa %>%
+  select(ret.closing.prices) %>% 
+  slice(-1)
+
+daily_returns_petro <- daily_returns_petro %>%
+  select(ret.closing.prices) %>% 
+  slice(-1)
+
+daily_returns_ibovespa <- as.ts(daily_returns_ibovespa)
+daily_returns_petro <- as.ts(daily_returns_petro)
+```
+**(a)**
+
+### ARCH
+
+Vamos estimar um modelo ARCH(1) para a série de retornos do PETROBRAS:
+
+```{r echo=TRUE}
+arch.spec.student <- ugarchspec(variance.model=list(model="sGARCH",
+                                                     garchOrder=c(1, 1)),
+                                 mean.model=list(armaOrder=c(0, 0),
+                                                 include.mean=FALSE),
+                                 distribution.model="std")
+arch.fit.petro.student <- ugarchfit(spec=arch.spec.student,
+                                    data=daily_returns_petro)
+
+arch.spec.normal <- ugarchspec(variance.model=list(model="sGARCH",
+                                                    garchOrder=c(1, 1)),
+                                mean.model=list(armaOrder=c(0, 0),
+                                                include.mean=FALSE),
+                                distribution.model="norm")
+arch.fit.petro.normal <- ugarchfit(spec=arch.spec.normal,
+                                   data=daily_returns_petro)
+
+#infocriteria(arch.fit.petro.normal)
+#infocriteria(arch.fit.petro.student)
+#various plots for fitted values
+options(repr.plot.width=15, repr.plot.height=15)
+plot(arch.fit.petro.student, which="all")
+plot(arch.fit.petro.normal, which="all")
+```
+
+### GARCH
+
+Agora vamos estimar um modelo GARCH(1, 1) para a mesma série de retornos:
+
+```{r echo=TRUE}
+?ugarchspec
+garch.spec.student <- ugarchspec(variance.model=list(model="sGARCH",
+                                                     garchOrder=c(1, 1)),
+                                 mean.model=list(armaOrder=c(1, 1),
+                                                 include.mean=TRUE),
+                                 distribution.model="std")
+garch.fit.petro.student <- ugarchfit(spec=garch.spec.student,
+                                    data=daily_returns_petro)
+
+garch.spec.normal <- ugarchspec(variance.model=list(model="sGARCH",
+                                                    garchOrder=c(1, 1)),
+                                mean.model=list(armaOrder=c(1, 1),
+                                                include.mean=TRUE),
+                                distribution.model="norm")
+garch.fit.petro.normal <- ugarchfit(spec=garch.spec.normal,
+                                   data=daily_returns_petro)
+
+garch.fit.petro.student
+garch.fit.petro.normal
+#infocriteria(garch.fit.petro.normal)
+#infocriteria(garch.fit.petro.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(garch.fit.petro.student, which="all")
+plot(garch.fit.petro.normal, which="all")
+```
+
+### GARCH na média
+
+Agora vamos estimar um modelo GARCH(1, 1) na média para a mesma série de retornos:
+
+```{r echo=TRUE}
+#https://search.r-project.org/CRAN/refmans/rugarch/html/ugarchspec-methods.html
+#?ugarchspec
+garch_mean.spec.student <- ugarchspec(variance.model=list(model="sGARCH",
+                                                          garchOrder=c(1, 1)),
+                                      mean.model=list(armaOrder=c(1, 1), 
+                                                      include.mean=TRUE,
+                                                      archm=TRUE),
+                                      distribution.model="std")
+garch_mean.fit.petro.student <- ugarchfit(spec=garch_mean.spec.student,
+                                          data=daily_returns_petro)
+
+garch_mean.spec.normal <- ugarchspec(variance.model=list(model="sGARCH",
+                                                    garchOrder=c(1, 1)),
+                                mean.model=list(armaOrder=c(1, 1), archm=TRUE,
+                                                include.mean=TRUE),
+                                distribution.model="norm")
+garch_mean.fit.petro.normal <- ugarchfit(spec=garch_mean.spec.normal,
+                                   data=daily_returns_petro)
+
+garch_mean.fit.petro.student
+garch_mean.fit.petro.normal
+
+#infocriteria(garch_mean.fit.petro.normal)
+#infocriteria(garch_mean.fit.petro.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(garch_mean.fit.petro.student, which="all")
+plot(garch_mean.fit.petro.normal, which="all")
+```
+
+### EGARCH (Exponential GARCH)
+
+Agora vamos estimar um modelo EGARCH(1, 1) para a mesma série de retornos:
+
+```{r echo=TRUE}
+#https://search.r-project.org/CRAN/refmans/rugarch/html/ugarchspec-methods.html
+#?ugarchspec
+egarch.spec.student <- ugarchspec(variance.model=list(model="eGARCH",
+                                                      garchOrder=c(1, 1)),
+                                  mean.model=list(armaOrder=c(1, 1), 
+                                                  include.mean=TRUE),
+                                  distribution.model="std")
+
+egarch.spec.normal <- ugarchspec(variance.model=list(model="eGARCH",
+                                                     garchOrder=c(1, 1)),
+                                mean.model=list(armaOrder=c(1, 1),
+                                                include.mean=TRUE),
+                                distribution.model="norm")
+
+egarch.fit.petro.student <- ugarchfit(spec=garch_mean.spec.student,
+                                      data=daily_returns_petro)
+
+egarch.fit.petro.normal <- ugarchfit(spec=egarch.spec.normal,
+                                   data=daily_returns_petro)
+
+egarch.fit.petro.student
+egarch.fit.petro.normal
+
+#infocriteria(egarch.fit.petro.normal)
+#infocriteria(egarch.fit.petro.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(egarch.fit.petro.student, which="all")
+plot(egarch.fit.petro.normal, which="all")
+```
+
+
+### GRJ - GARCH
+
+Agora vamos estimar um modelo GJR(1, 1) para a mesma série de retornos:
+
+```{r echo=TRUE}
+#https://search.r-project.org/CRAN/refmans/rugarch/html/ugarchspec-methods.html
+gjr_garch.spec.student <- ugarchspec(variance.model=list(model="gjrGARCH",
+                                                         garchOrder=c(1, 1)),
+                                     mean.model=list(armaOrder=c(1, 1), 
+                                                     include.mean=TRUE),
+                                  distribution.model="std")
+
+gjr_garch.spec.normal <- ugarchspec(variance.model=list(model="gjrGARCH",
+                                                        garchOrder=c(1, 1)),
+                                    mean.model=list(armaOrder=c(1, 1),
+                                                    include.mean=TRUE),
+                                    distribution.model="norm")
+
+gjr_garch.fit.petro.student <- ugarchfit(spec=gjr_garch.spec.student,
+                                         data=daily_returns_petro)
+
+gjr_garch.fit.petro.normal <- ugarchfit(spec=gjr_garch.spec.normal,
+                                        data=daily_returns_petro)
+
+gjr_garch.fit.petro.student
+gjr_garch.fit.petro.normal
+
+#infocriteria(gjr_garch.fit.petro.normal)
+#infocriteria(gjr_garch.fit.petro.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(gjr_garch.fit.petro.student, which="all")
+plot(gjr_garch.fit.petro.normal, which="all")
+```
+
+**(b)**
+
+### ARCH
+Vamos estimar um modelo ARCH(1) para a série de retornos do IBOVESPA:
+
+```{r echo=TRUE}
+arch.fit.ibovespa.student <- ugarchfit(spec=arch.spec.student,
+                                       data=daily_returns_ibovespa)
+
+arch.fit.ibovespa.normal <- ugarchfit(spec=arch.spec.normal,
+                                      data=daily_returns_ibovespa)
+
+arch.fit.ibovespa.student
+arch.fit.ibovespa.normal
+
+#infocriteria(arch.fit.ibovespa.normal)
+# infocriteria(arch.fit.ibovespa.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(arch.fit.ibovespa.student, which="all")
+plot(arch.fit.ibovespa.normal, which="all")
+```
+
+### GARCH
+
+Agora vamos estimar um modelo GARCH(1, 1) para a mesma série de retornos:
+
+```{r echo=TRUE}
+garch.fit.ibovespa.student <- ugarchfit(spec=garch.spec.student,
+                                        data=daily_returns_ibovespa)
+
+garch.fit.ibovespa.normal <- ugarchfit(spec=garch.spec.normal,
+                                       data=daily_returns_ibovespa)
+
+garch.fit.ibovespa.student
+garch.fit.ibovespa.normal
+
+#infocriteria(garch.fit.petro.normal)
+#infocriteria(garch.fit.petro.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(garch.fit.ibovespa.student, which="all")
+plot(garch.fit.ibovespa.normal, which="all")
+```
+
+### GARCH na média
+
+Agora vamos estimar um modelo GARCH(1, 1) na média para a mesma série de retornos:
+
+```{r echo=TRUE}
+
+garch_mean.fit.ibovespa.student <- ugarchfit(spec=garch_mean.spec.student,
+                                             data=daily_returns_ibovespa)
+
+garch_mean.fit.ibovespa.normal <- ugarchfit(spec=garch_mean.spec.normal,
+                                            data=daily_returns_ibovespa)
+
+garch_mean.fit.ibovespa.student
+garch_mean.fit.ibovespa.normal
+
+#infocriteria(garch_mean.fit.ibovespa.normal)
+#infocriteria(garch_mean.fit.ibovespa.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(garch_mean.fit.ibovespa.student, which="all")
+plot(garch_mean.fit.ibovespa.normal, which="all")
+```
+
+### EGARCH (Exponential GARCH)
+
+Agora vamos estimar um modelo EGARCH(1, 1) para a mesma série de retornos:
+
+```{r echo=TRUE}
+egarch.fit.ibovespa.student <- ugarchfit(spec=garch_mean.spec.student,
+                                         data=daily_returns_ibovespa)
+
+egarch.fit.ibovespa.normal <- ugarchfit(spec=egarch.spec.normal,
+                                        data=daily_returns_ibovespa)
+
+egarch.fit.ibovespa.student
+egarch.fit.ibovespa.normal
+
+#infocriteria(egarch.fit.ibovespa.normal)
+#infocriteria(egarch.fit.ibovespa.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(egarch.fit.ibovespa.student, which="all")
+plot(egarch.fit.ibovespa.normal, which="all")
+```
+### GRJ - GARCH
+
+Agora vamos estimar um modelo GJR(1, 1) para a mesma série de retornos:
+
+```{r echo=TRUE}
+gjr_garch.fit.ibovespa.student <- ugarchfit(spec=gjr_garch.spec.student,
+                                         data=daily_returns_ibovespa)
+
+gjr_garch.fit.ibovespa.normal <- ugarchfit(spec=gjr_garch.spec.normal,
+                                        data=daily_returns_ibovespa)
+
+gjr_garch.fit.ibovespa.student
+gjr_garch.fit.ibovespa.normal
+
+#infocriteria(gjr_garch.fit.ibovespa.normal)
+#infocriteria(gjr_garch.fit.ibovespa.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(gjr_garch.fit.ibovespa.student, which="all")
+plot(gjr_garch.fit.ibovespa.normal, which="all")
+```
+
+<hr>
+
+## Questão 4
+
+***Para os modelos ajustados acima, calcule os coeficientes de persistência e half-life e interprete os resultados.***
+
+## Resposta 4
+
+O código abaixo calcula os coeficientes de persistência e *half-life* para os modelos da questão anterior.
+
+### PETROBRAS
+
+Coeficiente de persistência para cada modelo usado na questão anterior para os retornos da PETROBRAS:
+
+```{r echo=TRUE}
+paste("arch.normal:", persistence(arch.fit.petro.normal))
+paste("arch.student:", persistence(arch.fit.petro.student))
+paste("garch.normal:", persistence(garch.fit.petro.normal))
+paste("garch.student:", persistence(garch.fit.petro.student))
+paste("garch-m.normal:", persistence(garch_mean.fit.petro.normal))
+paste("garch-m.student:", persistence(garch_mean.fit.petro.student))
+paste("egarch.normal:", persistence(egarch.fit.petro.normal))
+paste("egarch.student:", persistence(egarch.fit.petro.student))
+paste("gjr_garch.normal:", persistence(gjr_garch.fit.petro.normal))
+paste("gjr_garch.student:", persistence(gjr_garch.fit.petro.student))
+```
+
+Os valores acima indicam que haverá maior pesistência dos choques no caso de 
+usarmos o modelo EGARCH(1, 1) com distribuição de t-Studentpar a a série de 
+retorno em questão (`egarch.student`). Ou seja, escolhendo estemodelo haverá 
+uma maior persistência da volatilidade.
+
+Por outro lado, escolhendo o GJR(1, 1) com distribuição normal (`gjr_garch.normal`)
+haverá uma menor persistência da volatilidade.
+
+***Half-life***:
+
+*Half-time* para cada modelo usado na questão anterior para os retornos da PETROBRAS:
+
+```{r echo=TRUE}
+paste("arch.normal:", halflife(arch.fit.petro.normal))
+paste("arch.student:", halflife(arch.fit.petro.student))
+paste("garch.normal:", halflife(garch.fit.petro.normal))
+paste("garch.student:", halflife(garch.fit.petro.student))
+paste("garch-m.normal:", halflife(garch_mean.fit.petro.normal))
+paste("garch-m.student:", halflife(garch_mean.fit.petro.student))
+paste("egarch.normal:", halflife(egarch.fit.petro.normal))
+paste("egarch.student:", halflife(egarch.fit.petro.student))
+paste("gjr_garch.normal:", halflife(gjr_garch.fit.petro.normal))
+paste("gjr_garch.student:", halflife(gjr_garch.fit.petro.student))
+```
+
+Pelos valores acima, notamos que com a escolha do modelo GRJ(1, 1) com 
+distribuição Normal (`gjr_garch.normal`), modelo correspondente ao menor 
+valor de "half-time", teremos uma menor quantidade de dias para o 
+choque ser dissipado pela metade (cerca de 2 dias). 
+
+Por outro lado, escolhendo o EGARCH(1, 1) com distribuição t-Student 
+(`egarch.student`), levaremos mais dia para que um choque se dissipe pela metade (cerca 
+de 11 dias).
+
+
+### IBOVESPA
+
+Coeficiente de persistência para cada modelo usado na questão anterior para 
+os retornos dO IBOVESPA:
+
+```{r echo=TRUE}
+paste("arch.normal:", persistence(arch.fit.ibovespa.normal))
+paste("arch.student:", persistence(arch.fit.ibovespa.student))
+paste("garch.normal:", persistence(garch.fit.ibovespa.normal))
+paste("garch.student:", persistence(garch.fit.ibovespa.student))
+paste("garch-m.normal:", persistence(garch_mean.fit.ibovespa.normal))
+paste("garch-m.student:", persistence(garch_mean.fit.ibovespa.student))
+paste("egarch.normal:", persistence(egarch.fit.ibovespa.normal))
+paste("egarch.student:", persistence(egarch.fit.ibovespa.student))
+paste("gjr_garch.normal:", persistence(gjr_garch.fit.ibovespa.normal))
+paste("gjr_garch.student:", persistence(gjr_garch.fit.ibovespa.student))
+```
+
+Analisando os valores obtidos notamos que todos os modelos analisados possuem 
+persistência muito semelhante, por volta de 0.95.
+
+***Half-life***:
+
+*Half-time* para cada modelo usado na questão anterior para os retornos 
+do IBOVESPA:
+
+```{r echo=TRUE}
+paste("arch.normal:", halflife(arch.fit.ibovespa.normal))
+paste("arch.student:", halflife(arch.fit.ibovespa.student))
+paste("garch.normal:", halflife(garch.fit.ibovespa.normal))
+paste("garch.student:", halflife(garch.fit.ibovespa.student))
+paste("garch-m.normal:", halflife(garch_mean.fit.ibovespa.normal))
+paste("garch-m.student:", halflife(garch_mean.fit.ibovespa.student))
+paste("egarch.normal:", halflife(egarch.fit.ibovespa.normal))
+paste("egarch.student:", halflife(egarch.fit.ibovespa.student))
+paste("gjr_garch.normal:", halflife(gjr_garch.fit.ibovespa.normal))
+paste("gjr_garch.student:", halflife(gjr_garch.fit.ibovespa.student))
+```
+
+Pelos valores acima, notamos que com a escolha do modelo ARCH(1) com 
+distribuição Normal (`arch.normal`), modelo correspondente ao menor 
+valor de "half-time", teremos uma menor quantidade de dias para o 
+choque ser dissipado pela metade (cerca de 12 dias). 
+
+Por outro lado, escolhendo o EGARCH(1, 1) com distribuição normal 
+(`egarch.normal`), levaremos mais dia para que um choque se dissipe pela metade (cerca 
+de 17 dias).
+
+<hr>
+
+## Referências
+
+- Materiais das aulas (profa. Andreza Palma)
+
+- CAP. 2 do livro "TSAY, Ruey S. <i>An introduction to analysis of financial data with R.</i> John Wiley & Sons, 2014."
+
+- https://blog.devgenius.io/volatility-modeling-with-r-arch-and-garch-models-11fde2d7ac38

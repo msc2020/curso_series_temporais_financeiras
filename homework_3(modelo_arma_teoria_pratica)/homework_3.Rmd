@@ -1,0 +1,532 @@
+---
+title: "Homework 3 (Lista ARMA prática)"
+author: "Marcelo Santos Carielo"
+date: "ago/2023"
+output:
+  html_document:
+    toc: yes
+    smart: no
+editor_options:
+  markdown:
+    wrap: 72
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+rm(list=ls())
+options(warn=-1)
+# options(warn=0)
+```
+
+<hr>
+
+## Questão 1
+***1. Usando todos os passos vistos no módulo sobre ARMA, encontre o melhor modelo para os retornos diários do ı́ndice Ibovespa. Utilize o perı́odo de 2021 - presente. Você pode usar a função auto.arima, mas deve fazer a identificação do modelo usando as FAC e FACP, diagnóstico, etc. Para recordar, os passos são os seguintes:
+(a) Fazer uma análise visual da série, verificando os fatos estilizados.
+(b) Fazer a análise da FAC e da FACP. Objetivo é entender as autocorrelações da série de dados e nos ajudar a determinar qual o modelo e a ordem de defasagem escolher (identificação)
+(c) Estimar o modelo baseado na defasagem escolhida pelos critérios FAC e FACP. Qual a estatı́stica-t de cada parâmetro? Qual o valor dos critérios de informação (BIC e AIC)? (estimação)
+(d) Diagnóstico dos resı́duos. Verificar se os resı́duos se comportam como ruı́do branco. (diagnóstico)`***
+
+
+## Resposta 1
+
+Para este exercício, usaremos a série de retornos do IBOVESPA de `01/01/2019` até o dia de hoje (`2023-07-06`). O código abaixo coleta esses dados do Yahoo Finance.
+
+```{r Coleta dados do IBOVESPA}
+library(BatchGetSymbols)
+
+# define datas de início e fim
+date_init <- "2019-01-01"
+date_end <- "2023-07-06"
+#date_end <- Sys.Date()
+
+# coleta dados do IBOVESPA
+tickers <- c("^BVSP")
+assets <- BatchGetSymbols(tickers=tickers,
+                          first.date=date_init,
+                          last.date=date_end,
+                          type.return="log", # log retorno
+                          freq.data="daily")
+ibovespa <- assets[[2]]
+```
+
+Após coletarmos os dados, com frequência diária, realizamos os ajustes necessários para termos a série temporal de interesse:
+
+```{r}
+daily_returns <- ibovespa %>% 
+  select(ref.date, ret.closing.prices)
+
+date <- daily_returns %>%
+  select(ref.date) %>% 
+  rename(date=ref.date) %>% 
+  slice(-1)
+
+daily_returns <- daily_returns %>%
+  select(ret.closing.prices) %>% 
+  slice(-1)
+
+daily_returns <- as.ts(daily_returns)
+```
+
+**(a)**
+Os códigos abaixo geram gráficos do preço diário e do log-retorno para o IBOVESPA.
+
+```{r}
+library(ggplot2, quietly=TRUE)
+library(gridExtra, quietly=TRUE)
+min(date$date)
+
+# preço diário
+g <- ggplot(data=ibovespa) +
+  geom_line(mapping=aes(x=ref.date, y=price.close, color=ticker), 
+            linewidth=0.8, na.rm=TRUE) +
+  geom_rect(aes(xmin=as.Date("2019-11-01"), xmax=as.Date("2020-10-01"),
+                ymin=0, ymax=1.5e5),
+            fill="transparent", linetype=3, color="orange", size=1.2) +
+  labs(x="", y="Preço de Fechamento", 
+       title="Cotação Diária",
+       subtitle=paste("Período: de ", date_init, " a ", date_end, sep=""),
+       caption="Fonte: Yahoo Finance / IBOVESPA") +
+  theme_minimal()
+g
+
+# retorno diário
+g.returns <- ggplot(data=ibovespa) +
+  geom_line(aes(x=ref.date, y=ret.closing.prices, color=ticker),
+            alpha=0.7, linewidth=0.4, na.rm=TRUE) +
+  geom_rect(aes(xmin=as.Date("2019-11-01"), xmax=as.Date("2020-10-01"), 
+                ymin=-0.4, ymax=0.3),
+            fill="transparent", linetype=3, color="orange", size=1.2) +
+  labs(x="" , y="Retornos",
+       title="Retorno Diário",
+        subtitle=paste("Período: de", date_init, " a ", date_end, sep=""), 
+        caption="Fonte: Yahoo Finance / IBOVESPA") +
+    theme_minimal()
+g.returns
+
+grid.arrange(g, g.returns, nrow=1, ncol=2)
+```
+
+Analisando os gráficos, notamos que a média dos retornos é 0, além disso a cotação diária e os retornos possuem o efeito da alavancagem, pois por volta do primeiro semestre de 2020. O gráfico de retornos mostra que no mesmo período a volatilidade aumentou e há uma correlação negativa entre os retornos e os preços. De fato, foi neste período que a pandemia de COVID-19 (uma <i>bad news</i>) começou a crescer no Brasil, aumentando os níveis de incerteza (alta volatilidade).
+
+```{r Análise cotação e retorno}
+# retornos absolutos
+g.volatility <- ggplot(data=ibovespa) +
+  geom_line(aes(x=ref.date, y=abs(ret.closing.prices), color=ticker),
+            alpha=0.7, linewidth=0.4, na.rm=TRUE) +
+  geom_rect(aes(xmin=as.Date("2020-02-01"), xmax=as.Date("2020-06-01"), 
+                ymin=0, ymax=0.2),
+            fill="transparent", linetype=2, color="red", size=1) +
+  geom_rect(aes(xmin=as.Date("2021-01-01"), xmax=as.Date("2021-05-01"), 
+                ymin=0, ymax=0.075),
+            fill="transparent", linetype=2, color="red", size=1) +
+  geom_rect(aes(xmin=as.Date("2021-06-01"), xmax=as.Date("2022-04-01"), 
+                ymin=0, ymax=0.05),
+            fill="transparent", linetype=2, color="blue", size=0.8) +
+  geom_rect(aes(xmin=as.Date("2022-04-30"), xmax=as.Date("2023-02-01"), 
+                ymin=0, ymax=0.075),
+            fill="transparent", linetype=2, color="red", size=1) +
+  geom_rect(aes(xmin=as.Date("2023-03-01"), xmax=as.Date("2023-07-05"), 
+                ymin=0, ymax=0.05),
+            fill="transparent", linetype=2, color="blue", size=0.8) +
+  labs( x="", y="Retorno Absoluto",
+        title="Retorno Absoluto",
+        subtitle=paste("Período: ", date_init, " - ", date_end, sep=""),
+        caption="Fonte: Yahoo Finance / IBOVESPA")+
+  theme_minimal()
+g.volatility
+```
+
+O gráfico acima mostra os valores absolutos dos retornos. Nos trechos destacados em vermelho, temos períodos de maior volatilidade. Já nos períodos destacads em azul, há uma diminuição da volatilidade, se comparado com o os que estão em vermelho.
+
+```{r Análise cotação e retorno - pt3}
+qqplot <- ggplot(data=ibovespa, 
+                 aes(sample=ret.closing.prices, color=ticker)) +
+  stat_qq(na.rm=TRUE) +
+  stat_qq_line(na.rm=TRUE) +
+    labs(x="Quantis teóricos (Normais)", y="Quantis amostra", 
+         title="Q-Q plot",
+         subtitle="Retornos diários do IBOVESPA",
+         caption="Fonte: Yahoo Finance / IBOVESPA") +
+  theme_minimal() +
+  facet_wrap(~ticker, nrow=2)
+qqplot
+```
+
+```{r Análise cotação e retorno - pt4}
+# histograma
+histogram <- ggplot(data=ibovespa) +
+  geom_histogram(aes(x=ret.closing.prices, y=after_stat(density), 
+                     fill=ticker, color=ticker),
+                 linetype=1, alpha=0.5, bins=30, na.rm=TRUE) +
+  geom_density(aes(x=ret.closing.prices, y=after_stat(density), color=ticker),
+               na.rm=TRUE, linewidth=0.7) +
+  labs(x="", y="Densidade", title="Histograma",
+       subtitle="Retornos diários",
+       caption="Fonte: B3") +
+  theme_minimal() +
+  facet_wrap(~ticker, nrow=2)
+histogram
+```
+
+Analisando as caudas nos gráficos Q-Q plot acima, notamos que seus percentis essão afastados da Normal. Dessa maneira, a distribuição dos retornos do IBOVESPA possui cauda pesada. Ou seja, eventos raros são comuns de ocorrer. Os histogramas sugerem que a média da distribuição dos retornos é zero.
+
+**(b)** Vejamos agora uma análise da ACF e da PACF da série de retornos do IBOVESPA.
+
+Para ter uma ideia do modelo a ser estimado, usamos as FAC e FACP. Para gerar os gráficos usaremos o `tsdisplay`:
+
+```{r}
+library(forecast)
+tsdisplay(daily_returns)
+```
+
+
+O gráfico da PACF acima, sugere um modelo AR(1). Já pelo gráfico da ACF, escolhemos um modelo MA(2) ou MA(1). Logo, uma proposta de modelo para esse processo é o ARMA(1, 2) ou ARMA(1, 1).
+
+**(c)**
+Para realizarmos a estimação do modelo ARMA, após as análises do item (b), iremos supor que se trata de uma série estacionária. Além dissom, usaremos o comando `arima` para ajustar o modelo (d=0 em `arima(p, d, q)`):
+
+```{r echo=TRUE}
+fit_1 <- arima(x=daily_returns, order=c(1, 0, 2))
+fit_2 <- arima(x=daily_returns, order=c(1, 0, 1))
+BIC(fit_1, fit_2)
+AIC(fit_1, fit_2)
+```
+
+No fit_1 realizado acima, usamos o modelo `ARMA(1, 2)` e no fit_2 usamos o `ARMA(1, 1)`.
+Analisando os valores de AIC notamos que o modelo do fit_1 é preferível ao do fit_2, visto que o AIC do fit_1 é menor do que o do fit_2. Já pelo critério BIC, o modelo do fit_2 é preferível ao do fit_1, pois o BIC do fit_2 é menor do que o do fit_1. Dessa maneira, a fim de trabalharmos com modelo menos complexo possível (`parcimônia`), optaremos por usar o modelo `ARMA(1, 1)` ou algum mais simples que este.
+
+Abaixo temos a t-estatística de cada parâmetro, tanto do ARMA(1, 2) como do ARMA(1, 1) aqui considerado.
+
+```{r echo=TRUE}
+#install.packages("lmtest")
+library("lmtest")
+#?coeftest
+coeftest(fit_1)
+coeftest(fit_2)
+```
+
+Vamos retirar o coeficiente correspondente ao maior valor de p das estatísticas acima para o ARMA(1, 1) e reestimar nosso modelo. Assim teremos um ARMA(1, 0).
+
+```{r echo=TRUE}
+#?arima
+fit_3 <- arima(x=daily_returns, order=c(1, 0, 0))
+coeftest(fit_3)
+```
+
+
+Notamos pelas estatísticas acima que o *drift* (intercepto) do ARMA(1, 0) proposto possui valor de acima de 0.05. Logo, vamos consideremos um ARMA(1, 0) sem *drift*:
+
+```{r echo=TRUE}
+fit_4 <- arima(x=daily_returns, order=c(1, 0, 0), include.mean=FALSE)
+coeftest(fit_4)
+```
+
+Agora o modelo proposto possui coeficiente com valor de p adquado (i.e., p < 0.05) de forma que escolhemos o modelo `ARMA(1, 0)` sem *drift*.
+
+**(d)**
+Para verificar se o ARMA(1, 0) sem *drift* proposto no fit_4 é adequado, realizamos uma análise do seus resíduos.
+
+```{r echo=TRUE}
+tsdiag(fit_4)
+Box.test(fit_4$residuals, lag=7, fitdf=1) 
+Box.test(residuals(fit_4), type="Ljung")
+acf(residuals(fit_4))
+pacf(residuals(fit_4))
+```
+
+
+Usamos `fitdf=1` para corrigir o grau de liberdade do teste dado que a série testada é resultado de uma regressão com 1 termo AR. Os valores acima mostram que  estatística de teste é igual a `47.432` com valor de p de `1.534e-08`. Portanto, não rejeitamos a hipótese nula e concluímos que os resíduos, até a sétima defasagem, são conjuntamente não correlacionados.
+
+```{r}
+plot.ts(fit_4$residuals)
+```
+
+O gráfico acima sugere que a média dos resíduos é zero e sua variância é finita. Pelo que vimos anteriormente, a série dos resíduos do modelo ARMA(1, 0) sem *drift*, fit_4, é não autocorrelacionada. Estas características, sugerem que a série dos resíduos do modelo proposto é um ruído branco.
+
+<hr>
+
+## Questão 2
+
+***Para o modelo escolhido no exercı́cio anterior, calcule as previsões para 5 perı́odos à frente, com seu intervalo de confiança correspondente. Lembre-se que a previsão é do tipo estático: apenas informações até o momento t são usadas para fazer previsões em t + k.***
+
+## Resposta 2
+
+O código abaixo realiza a predição para 5 períodos a frente, utilizando o modelo do exercício anterior.
+
+```{r echo=TRUE}
+# ?predict
+prev_5ahead <- predict(fit_4, n.ahead=5, se.fit=T, interval="confidence")
+prev_5ahead
+```
+```{r echo=TRUE}
+forecast(fit_4, 5)
+
+plot(xlim=c(1110, 1130), forecast(fit_4, 5), type="b")
+```
+
+
+A seguir, plotamos a série observada (laranja) e a série estimada(verde).
+
+```{r echo=TRUE}
+#?lines
+plot(daily_returns, col="orange")
+lines(fitted(fit_4), col="green")
+```
+
+As predições exibidas nos gráficos mostram que os valores ajustados ficaram dentro do esperado.
+
+<hr>
+
+## Questão 3
+
+***Utilize função BatchGetSymbols::GetSP500Stocks para baixar dados de todas ações pertencentes ao atual ı́ndice SP500. Utilizando seus conhecimentos sobre dplyr, estime um modelo ARMA para os retornos de cada ação dos dados importados. No mesmo dataframe de saı́da, crie uma nova coluna com a previsão em t+1 de cada modelo. Qual ação possui maior expectativa de retorno?***
+
+## Resposta 3
+
+```{r Download datasets de ações}
+library(BatchGetSymbols, quietly=TRUE)
+BatchGetSymbols::GetSP500Stocks
+
+# define datas de início e fim
+date_init <- "2019-01-01"
+date_end <- "2023-07-06"
+#date_end <- Sys.Date()
+
+
+df.SP500 <- GetSP500Stocks()
+#print(df.SP500$Tickers)
+
+tickers <- df.SP500$Tickers
+
+#assets_sp500 <- BatchGetSymbols(tickers=tickers[1:10],
+assets_sp500 <- BatchGetSymbols(tickers=tickers,
+                          first.date=date_init,
+                          last.date=date_end,
+                          type.return="log", # log retorno
+                          freq.data="daily")
+
+assets_sp500 <- assets_sp500[[2]]
+# assets_sp500
+
+# salva dados da SP500
+saveRDS(df.SP500, file="dfSP500_tickers.rds")
+saveRDS(df.SP500, file="assets_sp500.rds")
+
+# carrega dados
+# df.SP500 <- readRDS("dfSP500.rds")
+# assets_sp500 <- readRDS("assets_sp500.rds")
+```
+
+Vejamos algumas informações sobre os tickets.
+
+```{r echo=TRUE}
+glimpse(assets_sp500)
+
+df_item <- assets_sp500 %>% 
+  filter(ticker=="MMM")
+head(df_item)
+```
+ Agora vamos criar uma nova coluna com a previsão em t+1 de cada modelo:
+ 
+```{r echo=TRUE}
+library(forecast)
+
+df <- assets_sp500
+#head(assets_sp500)
+df_res <- 0
+
+for (x in tickers[1:3]) {
+  #print(x)
+  assets_item <- assets_sp500 %>% 
+    filter(ticker==x)
+  
+  # obtém retorno diário e série temporal de retornos
+  daily_returns_item <- assets_item %>%
+    select(ref.date, ret.closing.prices)
+
+  date <- daily_returns_item %>%
+    select(ref.date) %>% 
+    rename(date=ref.date) %>% 
+    slice(-1)
+  
+  daily_returns_item <- daily_returns_item %>%
+    select(ret.closing.prices) %>% 
+    slice(-1)
+  
+  daily_returns_item <- as.ts(daily_returns_item)
+  
+  # ajusta um ARMA(1, 0, 0)
+  fit_item <- arima(x=daily_returns_item, order=c(1, 0, 0))
+  
+  prev_1ahead <- predict(fit_item, n.ahead=1, se.fit=T, interval="confidence")
+  # prev_1ahead
+  
+  # adicionar nome na coluna, ou criar regra
+  pred_forecast <- forecast(fit_item, 1)
+  assets_item$prev.1ahead_aux1 <- pred_forecast$mean[1]
+  
+  if (df_res == 0) {
+    df_res <- assets_item
+  }
+  else{
+    df_res <- df_res %>%
+      bind_rows(assets_item)
+  }
+}
+
+df_res_top_1 <- df_res %>%
+  select(ticker, prev.1ahead_aux1) %>%
+  group_by(ticker) %>% 
+  distinct(ticker, prev.1ahead_aux1) %>%
+  arrange(desc(prev.1ahead_aux1), .by_group=FALSE)
+  
+
+```
+
+Portanto, a ação possui maior expectativa de retorno é:
+```{r}
+head(df_res_top_1, 1)
+```
+
+<hr>
+
+## Questão 4
+
+***Separe os dados do SP500 em duas partes, etapa de estimação e etapa de previsão. Suponha que você queira, por exemplo, comprar a ação quando a previsão de retorno for positiva, vendendo-a no dia seguinte. As previsões dos modelos ARIMA permitem a construção de uma estratégia de negociação lucrativa?***
+
+## Resposta 4
+
+Consideremos a seguinte separação:
+
+```{r}
+library(dplyr)
+dim(df_res)
+
+df_predicao <- df_res %>% 
+    slice(7500:dim(df_res)[1]-1)
+
+fit_estimaticao <- arima(x=daily_returns, order=c(1, 0, 0), include.mean=FALSE)
+coeftest(fit_4)
+```
+
+
+```{r echo=TRUE}
+library(forecast)
+
+df <- assets_sp500
+#head(assets_sp500)
+df_res <- 0
+
+#for (x in tickers[1:7]) {
+for (x in tickers) {
+  # print(x)
+  assets_item <- assets_sp500 %>% 
+    filter(ticker==x)
+  
+  # print(dim(assets_item))
+  if (dim(assets_item)[1] > 0){
+    # obtém retorno diário e série temporal de retornos
+    daily_returns_item <- assets_item %>%
+      select(ref.date, ret.closing.prices)
+  
+    date <- daily_returns_item %>%
+      select(ref.date) %>% 
+      rename(date=ref.date) %>% 
+      slice(-1)
+    
+    daily_returns_item <- daily_returns_item %>%
+      select(ret.closing.prices) %>% 
+      slice(-1)
+    
+    daily_returns_item <- as.ts(daily_returns_item)
+    
+    # ajusta um ARMA(1, 0, 0)
+    fit_item <- arima(x=daily_returns_item, order=c(1, 0, 0))
+    
+    prev_1ahead <- predict(fit_item, n.ahead=1, se.fit=T, interval="confidence")
+    # prev_1ahead
+    
+    # adiciona coluna com predições
+    pred_forecast <- forecast(fit_item, 1)
+    assets_item$prev.1ahead_aux1 <- pred_forecast$mean[1]
+    
+    if (df_res == 0) {
+      df_res <- assets_item
+    }
+    else{
+      df_res <- df_res %>%
+        bind_rows(assets_item)
+    }
+  }
+}
+
+df_res %>%
+    group_by(ticker) %>% 
+    filter(prev.1ahead_aux1 == max(prev.1ahead_aux1))
+
+df_res_top_n <- df_res %>%
+  select(ref.date, ticker, prev.1ahead_aux1) %>%
+  group_by(ticker) %>% 
+  distinct(ticker, prev.1ahead_aux1) %>%
+  arrange(desc(prev.1ahead_aux1), .by_group=FALSE)
+
+# ref: https://stackoverflow.com/questions/70139121/separating-positive-and-negative-values-in-r-data-table-many-columns
+df_res_top_n <- df_res_top_n %>% 
+  mutate(across(everything(), 
+                ~case_when(. < 0 ~ 0,TRUE ~ .), 
+                .names = "{col}_pos")) %>% 
+  mutate(across(-contains("pos"),
+                ~case_when(. < 0 ~ ., TRUE ~ 0),
+                .names = "{col}_neg"))
+
+head(df_res_top_n)
+```
+
+Após a divisão, podemos organizar os dados conforme feito acima, de forma que os indíces cuja previsão de retorno for positiva podem ser comprados hoje e vendido no dia seguinte.
+Caso a predição com o modelo ARMA ajustado, feita para o dia segunite, fique de fato próxima do valor real observado para cada um dos tickers, essa estratégia seria lucrativa.
+
+```{r}
+# seleciona tickers com predição de retorno positiva
+pos_tickers <- df_res_top_n %>% 
+  filter(prev.1ahead_aux1_pos > 0) %>%
+  arrange(ticker)
+dim(pos_tickers)
+
+# adiciona coluna com predições para o dia seguinte
+df_comparacao <- df %>% 
+  filter(ref.date == max(df$ref.date),
+         ticker %in% pos_tickers$ticker) %>%
+  arrange(ticker) %>%
+  mutate(pred1ahead=pos_tickers$prev.1ahead_aux1_pos)
+
+# adiciona coluna da diferença
+df_comparacao <- df_comparacao %>%
+  mutate(diferenca=ret.closing.prices-pred1ahead) %>%
+  select(ticker, ret.closing.prices, pred1ahead, diferenca)
+
+dim(df_comparacao)
+head(df_comparacao)
+
+```
+
+A tabela acima agrupa os resultados das predições para um dia a frente, considerando apenas as predições que tiveram valores positivos. Ainda nesta tabela, acrescentamos os valores observados para o dia da predição e uma coluna com a diferença entre o valor observado e o valor predito pelo modelo. Para saber se a estratégia que propomos foi lucrativa, podemos analisar a soma da coluna `diferença`. Se ela for positiva, nossa estratégia foi lucrativa, caso contrário, não foi. O código abaixo checa se isso ocorre:
+
+```{r}
+sum(df_comparacao$diferenca)
+```
+
+Como o valor foi negativo, nossa estratégia não foi lucrativa. Se conseguissemos  ajustar modelos ARMA mais precisos, talvez a estratégia proposta fosse lucrativa para este cenário.
+
+Outra tentativa para termos uma estratégia lucrativa é selecionarmos apenas os índices cuja previsão se concretizou como sendo positiva. Dessa forma, as operações ocorreríam apenas em índices que o modelo prediz valores positivos para o retorno e que de fato tem ocorrido nos valores observados em dias passados. 
+
+Como há uma margem de confiança nas predições dos valores, também poderíamos nos concentrar nos tickers cuja as predições tiveram menores intervalos confiança, ou que toda faixa de intervalo de confiança seja positivos. Neste caso, seria esperado que as flutuações da predição para os tickers analisados tivessem maiores chances de retorno positivo. A margem de confiança seria tal que, mesmo com as flutuações da predição (em torno do valor médio predito), teríamos maiores chances de obter valores positivos para cada um dos tickers em questão. Dessa forma, os tickers selecionados pela estratégia talvez possam trazer lucros.
+
+<hr>
+
+## Referências
+
+- Materiais das aulas (profa. Andreza Palma)
+
+- CAP. 2 do livro "TSAY, Ruey S. <i>An introduction to analysis of financial data with R.</i> John Wiley & Sons, 2014."

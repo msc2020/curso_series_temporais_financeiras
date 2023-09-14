@@ -1,0 +1,12 @@
+Modelagem das ações da VALE: uma abordagem ARMA-GARCH
+
+Seguindo o roteiro visto em aula,  ajuste modelos GARCH(1,1), EGARCH(1,1) e GJR(1,1) para as ações da VALE, usando as distribuições t-Student e Normal. 
+
+Verifique qual é o melhor modelo dentre esses, verificando também os resíduos. 
+
+Apresente previsões para a volatilidade condicional. 
+
+    Dúvidas sobre o homework 5 Fórum
+
+    Deixe aqui suas dúvidas sobre o homework final!
+    Homework final: Modelagem das ações da VALE

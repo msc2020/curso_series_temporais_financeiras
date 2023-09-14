@@ -1,0 +1,406 @@
+---
+title: "Homework 5"
+author: "Marcelo Santos Carielo"
+date: "ago/2023"
+output:
+  html_document:
+    toc: yes
+    smart: no
+editor_options:
+  markdown:
+    wrap: 72
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+rm(list=ls())
+options(warn=-1)
+# options(warn=0)
+```
+
+<hr>
+
+## Questão - Modelagem das ações da VALE: uma abordagem ARMA-GARCH
+
+***Seguindo o roteiro visto em aula, ajuste modelos GARCH(1, 1), EGARCH(1, 1) e
+GJR(1, 1) para as ações da VALE, usando as distribuições t-Student e Normal. 
+Verifique qual é o melhor modelo dentre esses, verificando também os resíduos.
+Apresente previsões para a volatilidade condicional.***
+
+## Resposta
+
+Para este exercício, usaremos a série de retornos do VALE de `01/01/2019` até 
+o dia de hoje (`29-07-29`). O código abaixo coleta esses dados do Yahoo Finance.
+
+```{r Coleta dados do IBOVESPA}
+library(rugarch)
+library(BatchGetSymbols)
+
+# define datas de início e fim
+date_init <- "2019-01-01"
+date_end <- "2023-07-29"
+#date_end <- Sys.Date()
+
+# coleta dados da VALE
+tickers <- c("VALE3.SA")
+assets <- BatchGetSymbols(tickers=tickers,
+                          first.date=date_init,
+                          last.date=date_end,
+                          type.return="log", # log retorno
+                          freq.data="daily")
+assets <- assets[[2]]
+
+vale <- assets %>% 
+  filter(ticker=="VALE3.SA")
+```
+
+Agora vemos um resumo estatístico e transformamos os dados para o formato de 
+série temporal:
+
+```{r}
+library(fBasics)
+
+daily_returns_vale <- vale %>%
+  select(ref.date, ret.closing.prices)
+
+basicStats(daily_returns_vale$ret.closing.prices)
+
+date <- daily_returns_vale %>%
+  select(ref.date) %>% 
+  rename(date=ref.date) %>% 
+  slice(-1)
+
+daily_returns_vale <- daily_returns_vale %>%
+  select(ret.closing.prices) %>% 
+  slice(-1)
+
+daily_returns_vale <- as.ts(daily_returns_vale)
+
+```
+
+O resumo estatístico acima mostra que a curtose ficou maior do que 3, indicando 
+que a série analisada possui cauda pesada. Além disso, também 
+notamos que a média ficou por volta de zero. Estes resultados estão dentro do 
+esperado (média zero e cauda pesada).
+
+Vejamos os gráficos do preço diário e do log-retorno da série temporal da VALE.
+
+```{r}
+library(ggplot2, quietly=TRUE)
+library(gridExtra, quietly=TRUE)
+
+g <- ggplot(data=assets) +
+  geom_line(mapping=aes(x=ref.date, y=price.close, color=ticker), 
+            linewidth=0.8, na.rm=TRUE) +
+  geom_rect(aes(xmin=as.Date("2019-11-01"), xmax=as.Date("2020-10-01"),
+                ymin=25, ymax=70),
+            fill="transparent", linetype=2, color="brown", size=1.2) +
+  labs(x="", y="Preço de Fechamento", 
+       title="Cotação Diária",
+       subtitle=paste("Período: de ", date_init, " a ", date_end, sep=""),
+       caption="Fonte: B3") +
+  theme_minimal()
+
+g.returns <- ggplot(data=assets) +
+  geom_line(aes(x=ref.date, y=ret.closing.prices, color=ticker),
+            alpha=0.7, linewidth=0.4, na.rm=TRUE) +
+  geom_rect(aes(xmin=as.Date("2019-11-01"), xmax=as.Date("2020-10-01"), 
+                ymin=-0.2, ymax=0.25),
+            fill="transparent", linetype=2, color="darkgreen", size=1.2) +
+  geom_rect(aes(xmin=as.Date("2019-01-01"), xmax=as.Date("2019-04-01"), 
+                ymin=-0.33, ymax=0.12),
+            fill="transparent", linetype=2, color="darkblue", size=0.5) +
+  labs(x="" , y="Retornos",
+       title="Retorno Diário",
+        subtitle=paste("Período: de", date_init, " a ", date_end, sep=""), 
+        caption="Fonte: B3") +
+    theme_minimal()
+
+grid.arrange(g, g.returns, nrow=1, ncol=2)
+
+```
+
+O gráfico dos retornos mostra o aumento da volatilidade no período de início da
+pandemia no Brasil. Notamos ainda o início de 2019 também foi um período de alta 
+volatilidade das ações da VALE.
+
+A seguir vamos estimar modelos GARCH(1, 1), EGARCH(1, 1) e GJR(1, 1) para a 
+série de retornos da VALE, usando as distribuições t-Student e Normal.
+
+## TESTE LM
+A hipótese nula do Teste LM é que não há heterocedasticidade condicional 
+(efeito ARCH). O código a seguir realiza o Teste LM para lags 1, 2, 3, 5, 10 e
+15.
+
+```{r}
+library(FinTS)
+ArchTest(daily_returns_vale, lags=1,demean=TRUE)
+ArchTest(daily_returns_vale, lags=2,demean=TRUE)
+ArchTest(daily_returns_vale, lags=3,demean=TRUE)
+ArchTest(daily_returns_vale, lags=5,demean=TRUE)
+ArchTest(daily_returns_vale, lags=10,demean=TRUE)
+ArchTest(daily_returns_vale, lags=20,demean=TRUE)
+```
+
+Em todos os casos acima não rejeitamos a hipótese nula, pois p < 0.05. Logo, a 
+série das variâncias não é autocorrelacionada e uma boa opção para modelarmos os
+retornos da VALE é usarmos modelos da família ARCH.
+
+### GARCH(1, 1)
+
+Estimamos um modelo GARCH(1, 1) para a série da VALE com o seguinte código:
+
+```{r echo=TRUE}
+garch.spec.student <- ugarchspec(variance.model=list(model="sGARCH",
+                                                     garchOrder=c(1, 1)),
+                                 mean.model=list(armaOrder=c(1, 1),
+                                                 include.mean=TRUE),
+                                 distribution.model="std")
+garch.spec.normal <- ugarchspec(variance.model=list(model="sGARCH",
+                                                    garchOrder=c(1, 1)),
+                                mean.model=list(armaOrder=c(1, 1),
+                                                include.mean=TRUE),
+                                distribution.model="norm")
+
+garch.fit.vale.student <- ugarchfit(spec=garch.spec.student,
+                                    data=daily_returns_vale)
+
+garch.fit.vale.normal <- ugarchfit(spec=garch.spec.normal,
+                                   data=daily_returns_vale)
+
+garch.fit.vale.student
+garch.fit.vale.normal
+#infocriteria(garch.fit.vale.normal)
+#infocriteria(garch.fit.vale.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(garch.fit.vale.student, which="all")
+plot(garch.fit.vale.normal, which="all")
+```
+
+### EGARCH (Exponential GARCH)
+
+Agora vamos estimar um modelo EGARCH(1, 1) para a mesma série de retornos:
+
+```{r echo=TRUE}
+#?ugarchspec
+egarch.spec.student <- ugarchspec(variance.model=list(model="eGARCH",
+                                                      garchOrder=c(1, 1)),
+                                  mean.model=list(armaOrder=c(1, 1), 
+                                                  include.mean=TRUE),
+                                  distribution.model="std")
+egarch.spec.normal <- ugarchspec(variance.model=list(model="eGARCH",
+                                                     garchOrder=c(1, 1)),
+                                mean.model=list(armaOrder=c(1, 1),
+                                                include.mean=TRUE),
+                                distribution.model="norm")
+
+egarch.fit.vale.student <- ugarchfit(spec=egarch.spec.student,
+                                      data=daily_returns_vale)
+
+egarch.fit.vale.normal <- ugarchfit(spec=egarch.spec.normal,
+                                   data=daily_returns_vale)
+
+egarch.fit.vale.student
+egarch.fit.vale.normal
+
+#infocriteria(egarch.fit.vale.normal)
+#infocriteria(egarch.fit.vale.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(egarch.fit.vale.student, which="all")
+plot(egarch.fit.vale.normal, which="all")
+```
+
+
+### GRJ - GARCH
+
+Agora vamos estimar um modelo GJR(1, 1) para a mesma série de retornos:
+
+```{r echo=TRUE}
+#https://search.r-project.org/CRAN/refmans/rugarch/html/ugarchspec-methods.html
+gjr_garch.spec.student <- ugarchspec(variance.model=list(model="gjrGARCH",
+                                                         garchOrder=c(1, 1)),
+                                     mean.model=list(armaOrder=c(1, 1), 
+                                                     include.mean=TRUE),
+                                  distribution.model="std")
+gjr_garch.spec.normal <- ugarchspec(variance.model=list(model="gjrGARCH",
+                                                        garchOrder=c(1, 1)),
+                                    mean.model=list(armaOrder=c(1, 1),
+                                                    include.mean=TRUE),
+                                    distribution.model="norm")
+
+gjr_garch.fit.vale.student <- ugarchfit(spec=gjr_garch.spec.student,
+                                         data=daily_returns_vale)
+
+gjr_garch.fit.vale.normal <- ugarchfit(spec=gjr_garch.spec.normal,
+                                        data=daily_returns_vale)
+
+gjr_garch.fit.vale.student
+gjr_garch.fit.vale.normal
+
+#infocriteria(gjr_garch.fit.vale.normal)
+#infocriteria(gjr_garch.fit.vale.student)
+options(repr.plot.width=15, repr.plot.height=15)
+plot(gjr_garch.fit.vale.student, which="all")
+plot(gjr_garch.fit.vale.normal, which="all")
+```
+
+## Coeficientes de persistência e <i>half-life</i>
+
+Agora vamos calcular os coeficientes de persistência e half-life para cada um 
+dos modelos ajustados acima.
+
+Primeiramente, calculamos os coeficientes de persistência:
+
+```{r echo=TRUE}
+paste("garch.normal:", persistence(garch.fit.vale.normal))
+paste("garch.student:", persistence(garch.fit.vale.student))
+paste("egarch.normal:", persistence(egarch.fit.vale.normal))
+paste("egarch.student:", persistence(egarch.fit.vale.student))
+paste("gjr_garch.normal:", persistence(gjr_garch.fit.vale.normal))
+paste("gjr_garch.student:", persistence(gjr_garch.fit.vale.student))
+```
+
+Os valores acima indicam que haverá maior pesistência dos choques no caso de 
+usarmos o modelo EGARCH(1, 1) com distribuição Normal (`egarch.normal`). Ou seja,
+escolhendo este modelo haverá uma maior persistência da volatilidade.
+
+Por outro lado, escolhendo o GJR(1, 1) com distribuição Normal (`gjr_garch.normal`)
+haverá uma menor persistência da volatilidade.
+
+Calculamos os coeficientes de *half-life* com os códigos abaixo:
+
+```{r echo=TRUE}
+paste("garch.normal:", halflife(garch.fit.vale.normal))
+paste("garch.student:", halflife(garch.fit.vale.student))
+paste("egarch.normal:", halflife(egarch.fit.vale.normal))
+paste("egarch.student:", halflife(egarch.fit.vale.student))
+paste("gjr_garch.normal:", halflife(gjr_garch.fit.vale.normal))
+paste("gjr_garch.student:", halflife(gjr_garch.fit.vale.student))
+```
+
+Pelos valores acima, notamos que com a escolha do modelo GRJ(1, 1) com 
+distribuição Normal (`gjr_garch.normal`), modelo correspondente ao menor 
+valor de *half-time*, teremos uma menor quantidade de dias (cerca de 2 dias) 
+para o choque ser dissipado pela metade.
+
+Por outro lado, escolhendo o EGARCH(1, 1) com distribuição Normal 
+(`egarch.normal`), levará mais dias para que um choque se dissipe pela metade.
+De fato, os cálculos indicam que demorará cerca de 11 dias para que isso ocorra.
+
+## Critério de Informação
+Agora iremos calcular os critérios de informação de Akaike, Bayesiano (Schwarz), 
+Shibata e Hannan-Quinn para dos nossos modelos:
+
+```{r}
+
+print("garch.fit.vale.normal:")
+infocriteria(garch.fit.vale.normal)
+
+print("garch.fit.vale.student:")
+infocriteria(garch.fit.vale.student)
+
+print("egarch.fit.vale.normal:")
+infocriteria(egarch.fit.vale.normal)
+
+print("egarch.fit.vale.student:")
+infocriteria(egarch.fit.vale.student)
+
+print("gjr_garch.fit.vale.normal:")
+infocriteria(gjr_garch.fit.vale.normal)
+
+print("gjr_garch.fit.vale.student:")
+infocriteria(gjr_garch.fit.vale.student)
+
+```
+
+### Critério de Informação - Resumo
+
+| Modelo                     | Akaike    | Bayes     | Shibata   | Hannan-Quinn | 
+|:--------------------------:|:---------:|:---------:|:---------:|:------------:|
+| garch.fit.vale.normal      | -4.575955 | -4.549360 | -4.576010 |  -4.565910   |
+| garch.fit.vale.student     | -4.761855 | -4.730828 | -4.761930 |  -4.750136   |
+| egarch.fit.vale.normal     | -4.577233 | -4.546206 | -4.577309 |  -4.565514   |
+| egarch.fit.vale.student    | -4.766400 | -4.730940 | -4.766498 |  -4.753006   |
+| gjr_garch.fit.vale.normal  | -4.580250 | -4.549223 | -4.580325 |  -4.568531   |
+| gjr_garch.fit.vale.student |**-4.768878**|**-4.733419**|**-4.768977**|  **-4.755485**   |
+
+Como na tabela acima o modelo GJR(1,1) com t-Student obteve os menores valores
+para cada um dos critérios de informação apresentados, escolhemos este modelo 
+(`gjr_garch.fit.vale.student`) para prosseguirmos as análises.
+
+## Resíduos
+Vejamos a ACF dos resíduos:
+
+```{r}
+options(repr.plot.width=25, repr.plot.height=15)
+#plot(gjr_garch.fit.vale.student, which="all")
+plot(gjr_garch.fit.vale.student, which=10)
+```
+
+Notemos que para `lag = 29` temos uma autocorrelação significativa para a série 
+analisada. Para os demais lags os valores exibidos no gráfico não são 
+significativos.
+
+Vejamos os resíduos ao quadrado:
+
+```{r}
+options(repr.plot.width=25, repr.plot.height=15)
+#plot(gjr_garch.fit.vale.student, which="all")
+plot(gjr_garch.fit.vale.student, which=11)
+```
+
+Para os resíduos ao quadrado não notamos autocorrelação significativa para 
+nenhum dos lags exibidos no gráfico.
+
+
+## Volatilidade condicional
+A seguir temos o gráfico da volatilidade condicional para o modelo selecionado 
+acima:
+
+```{r}
+library(tbl2xts)
+sigma <- sigma(gjr_garch.fit.vale.student) %>% xts_tbl()
+colnames(sigma) <- c("date", "sigma") 
+sigma <- sigma %>% mutate(date=as.Date(date))
+#sigma$date
+ggplot(sigma) + geom_line(aes(x=date , y=sigma)) +
+  geom_rect(aes(xmin=as.Date("1-01-01"), xmax=as.Date("100-01-01"), 
+                ymin=0, ymax=0.135),
+            fill="transparent", linetype=2, color="darkgreen", size=1.2) +
+  geom_rect(aes(xmin=as.Date("200-01-01"), xmax=as.Date("350-01-01"), 
+                ymin=0, ymax=0.100),
+            fill="transparent", linetype=2, color="darkblue", size=0.5) +
+  theme_minimal()
+```
+
+Nos trechos destacados no gráfico acima temos um aumento na volatilidade. Os 
+períodos correspondem ao início de 2019 e ao início da pandemia. 
+
+## Previsões para volatilidade condicional
+
+Usando o modelo GJR(1, 1) com t-Student `gjr_garch.fit.vale.student` estimado 
+acima, realizamos a predição para volatilidade condicional 42 passos a frente:
+
+```{r}
+garchf.1 <- ugarchforecast(gjr_garch.fit.vale.student, n.ahead=42)
+garchf.1
+```
+```{r echo=TRUE}
+plot(garchf.1, which=1)
+```
+```{r}
+plot(garchf.1, which=3)
+```
+
+Pelos gráficos notamos que para os próximos 42 dias haverá um aumento na 
+volatilidade, que tenderá a se estabilizar em um valor mais alto que o dos 
+últimos dias. Por sua vez, a média continuará por volta de zero.
+
+<hr>
+
+## Referências
+
+- Materiais das aulas (profa. Andreza Palma)
+
+- CAP. 4 do livro "TSAY, Ruey S. <i>An introduction to analysis of financial data with R.</i> John Wiley & Sons, 2014."
